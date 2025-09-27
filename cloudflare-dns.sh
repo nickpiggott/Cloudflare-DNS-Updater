@@ -643,12 +643,16 @@ get_ip() {
 
 # Print current IPv4 and IPv6 addresses
 get_current_ips() {
-    local ipv4
-    local ipv6
-    ipv4=$(get_ip "ipv4")
+    local ipv4=""
+    local ipv6=""
+    if [[ $GLOBAL_IPV4 == "true" ]]; then
+        ipv4=$(get_ip "ipv4")
+    fi
+
     if [[ $GLOBAL_IPV6 == "true" ]]; then
         ipv6=$(get_ip "ipv6")
     fi
+    [[ -z "$ipv4" ]] && ipv4="disabled"
     [[ -z "$ipv6" ]] && ipv6="disabled"
     # Print with pretty formatting
     echo -e "IPv4: ${COLORS[CYAN]}${COLORS[BOLD]}$ipv4${COLORS[RESET]}"
@@ -669,10 +673,10 @@ display_domains_to_process() {
     # Display domains
     for domain in "${DOMAIN_ARRAY[@]}"; do
         domain_config=$(yq ".domains[] | select(.name == \"$domain\")" "$CONFIG_FILE")
-        ipv4_enabled=$(echo "$domain_config" | yq ".ipv4 // \"$GLOBAL_IPV4\"")
-        ipv6_enabled=$(echo "$domain_config" | yq ".ipv6 // \"$GLOBAL_IPV6\"")
-        proxied=$(echo "$domain_config" | yq ".proxied // \"$GLOBAL_PROXIED\"")
-        ttl=$(echo "$domain_config" | yq ".ttl // \"${GLOBAL_TTL}\"")
+        ipv4_enabled=$(echo "$domain_config" | yq ".ipv4")
+        ipv6_enabled=$(echo "$domain_config" | yq ".ipv6")
+        proxied=$(echo "$domain_config" | yq ".proxied")
+        ttl=$(echo "$domain_config" | yq ".ttl")
 
         # Remove quotes if present
         ipv4_enabled=$(echo "$ipv4_enabled" | tr -d '"')
@@ -842,9 +846,9 @@ load_yaml() {
     SANITIZE_LOGS=$(remove_quotes "$(yq '.logging.sanitize_logs' "$config_file")")
 
     # Load global settings
-    GLOBAL_IPV4=$(yq '.globals.ipv4 // true' "$config_file")
-    GLOBAL_IPV6=$(yq '.globals.ipv6 // true' "$config_file")
-    GLOBAL_PROXIED=$(yq '.globals.proxied // true' "$config_file")
+    GLOBAL_IPV4=$(yq '.globals.ipv4' "$config_file")
+    GLOBAL_IPV6=$(yq '.globals.ipv6' "$config_file")
+    GLOBAL_PROXIED=$(yq '.globals.proxied' "$config_file")
     GLOBAL_TTL=$(remove_quotes "$(yq '.globals.ttl // 1' "$config_file")")
 
     log_debug "Global settings: IPv4=$GLOBAL_IPV4, IPv6=$GLOBAL_IPV6, Proxied=$GLOBAL_PROXIED, TTL=$GLOBAL_TTL"
@@ -965,6 +969,7 @@ update_dns_record() {
     validate_update_params "$@" || return 1
 
     local current_record
+
     current_record=$(get_current_record_info "$zone_id" "$record_name" "$ip" "$record_type" "$proxied" "$ttl") || return 1
 
     if [[ "$current_record" == "new_record" ]]; then
@@ -1031,6 +1036,7 @@ get_current_record_info() {
     fi
 
     echo "$current_record"
+
 }
 
 # Compares the current record with the new values and prepares a change string
@@ -1039,6 +1045,7 @@ compare_and_prepare_changes() {
     local current_record="$1" new_ip="$2" new_proxied="$3" new_ttl="$4"
 
     local current_ip current_proxied current_ttl
+
     current_ip=$(echo "$current_record" | jq -r '.content')
     current_proxied=$(echo "$current_record" | jq -r '.proxied')
     current_ttl=$(echo "$current_record" | jq -r '.ttl')
@@ -1046,8 +1053,8 @@ compare_and_prepare_changes() {
     local ip_changed="no_change" proxied_changed="no_change" ttl_changed="no_change"
 
     [[ "$new_ip" != "$current_ip" ]] && ip_changed="$new_ip"
-    #[[ "$new_proxied" != "$current_proxied" ]] && proxied_changed="$new_proxied"
-    proxied_changed="$new_proxied" # Proxied changes is imperative for Cloudflare Payload
+    [[ "$new_proxied" != "$current_proxied" ]] && proxied_changed="$new_proxied"
+    # proxied_changed="$new_proxied" # Proxied changes is imperative for Cloudflare Payload
     [[ "$new_ttl" != "$current_ttl" ]] && ttl_changed="$new_ttl"
 
     if [[ "$ip_changed" == "no_change" && "$proxied_changed" == "no_change" && "$ttl_changed" == "no_change" ]]; then
@@ -1468,9 +1475,13 @@ process_domain() {
     local ttl_v4_changes=""
     local ttl_v6_changes=""
     local ipv4_local
-    ipv4_local=$(get_ip ipv4)
+    if [[ "$ipv4_enabled" == "true" ]]; then
+        ipv4_local=$(get_ip ipv4)
+    fi
     local ipv6_local
-    ipv6_local=$(get_ip ipv6)
+    if [[ "$ipv6_enabled" == "true" ]]; then
+        ipv6_local=$(get_ip ipv6)
+    fi
 
     if [[ "$ipv4_enabled" == "true" && -n "$ipv4_local" ]]; then
         ipv4_changes=$(update_dns_record "$zone_id" "$domain_name" "$ipv4_local" "A" "$proxied" "$ttl")
